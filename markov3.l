@@ -151,7 +151,7 @@ static char *savetoken(const char *txt)
 static int my_strcmp(const char *a, const char *b)
 {
     if (a == NULL)
-	return b ? -1 : 0;
+	return b == NULL ? 0 : -1;
     if (b == NULL)
 	return 1;
     return strcmp(a, b);
