@@ -34,16 +34,9 @@ typedef struct htentry HTENTRY;
 typedef struct node NODE;
 typedef struct follow FOLLOW;
 
-NODE *insert_token(char *txt, char *txt2);
-char *savetoken(const char *);
-int my_strcmp(const char *a, const char *b);
-void dump_database(char *file);
-void generate_article(void);
-void insert_pair(NODE *p1, NODE *p2);
-void output_word(const char *word);
-void process_token(const char *txt);
+static void process_token(const char *txt);
 
-int in_included_text = 0;
+static int in_included_text = 0;
 
 %}
 
@@ -68,12 +61,12 @@ int in_included_text = 0;
 }
 <BODY>[ \t]+		;	/* Skip white space */
 <BODY>\n[ \t\n]*\n	{
-    /* Paragraph break */
-    process_token("\n");
+	/* Paragraph break */
+	process_token("\n");
 }
 <BODY>[^ \t\n]+		{
-    in_included_text = 0;
-    process_token(yytext);
+	in_included_text = 0;
+	process_token(yytext);
 }
 <BODY>\n		;
 
@@ -109,18 +102,138 @@ struct follow {
 };
 
 
-NODE *prev_code;
-NODE *root;
-NODE *tknptr;
-FOLLOW *start;
-char **Argv;
-char *prev_token;
-int init_state = HDR;
-int n_files;
-int n_pairs;
-int n_tokens;
-int n_total;
-int verbose;
+static NODE *prev_code;
+static NODE *root;
+static NODE *tknptr;
+static FOLLOW *start;
+static char **Argv;
+static char *prev_token;
+static int init_state = HDR;
+static int n_files;
+static int n_pairs;
+static int n_tokens;
+static int n_total;
+static int verbose;
+
+/*
+ * This function saves a token in the hash table (if it isn't there
+ * already) and returns a pointer to the stored copy.
+ */
+static char *savetoken(const char *txt)
+{
+    int h;
+    const char *p;
+    HTENTRY *hp;
+
+    n_total++;
+    for (p = txt, h = 0; *p; h += *p++)
+	continue;
+
+    for (hp = &hashtab[h % HSIZE]; hp->next != NULL; hp = hp->next) {
+	if (strcmp(hp->text, txt) == 0)
+	    return hp->text;
+    }
+
+    /* OK, it's a new token.  Make hp->next point to a new,
+     * null block and make hp->text point to the text.
+     */
+    n_tokens++;
+    hp->text = strdup(txt);
+    hp->next = (HTENTRY *)malloc(sizeof (*hp));
+    hp->next->next = NULL;
+    hp->next->text = NULL;
+    return hp->text;
+}
+
+/*
+ * This version handles null strings
+ */
+static int my_strcmp(const char *a, const char *b)
+{
+    if (a == NULL)
+	return b ? -1 : 0;
+    if (b == NULL)
+	return 1;
+    return strcmp(a, b);
+}
+
+/*
+ * This recursive function inserts a token pair into the tree.
+ */
+static NODE *insert_in_tree(NODE *p, char *txt, char *txt2)
+{
+    int cmp;
+
+    if (p == NULL) {
+	/* Create a new node. */
+	p = (NODE *)malloc(sizeof (*p));
+	p->text = txt;
+	p->text2 = txt2;
+	p->left = p->right = NULL;
+	p->following = NULL;
+	p->ocount = 1;
+	tknptr = p;
+	n_pairs++;
+	if (verbose && (n_pairs % 1000) == 0)
+	    fprintf(stderr, "%d pairs\n", n_pairs);
+	return p;
+    }
+
+    cmp = my_strcmp(p->text, txt);
+    if (cmp == 0)
+	cmp = my_strcmp(p->text2, txt2);
+
+    if (cmp == 0) {
+	/* It's a match.  Increment the count. */
+        tknptr = p;
+	p->ocount += 1;
+    }
+    /* Look in the subtrees. */
+    else if (cmp < 0)
+	p->left = insert_in_tree(p->left, txt, txt2);
+    else
+	p->right = insert_in_tree(p->right, txt, txt2);
+    return p;
+}
+
+/*
+ * This just calls insert_in_tree starting at the root
+ */
+static NODE *insert_token(char *txt, char *txt2)
+{
+    root = insert_in_tree(root, txt, txt2);
+    return tknptr;
+}
+
+/*
+ * This function adds a successor.
+ */
+static FOLLOW *insert_in_succ_chain(FOLLOW *sp, NODE *np)
+{
+    if (sp == NULL) {
+	sp = (FOLLOW *)malloc(sizeof (*sp));
+	sp->node = np;
+	sp->count = 1;
+	sp->next = NULL;
+    }
+    else if (sp->node == np)
+	sp->count++;
+    else
+	sp->next = insert_in_succ_chain(sp->next, np);
+    return sp;
+}
+
+/*
+ * This calls insert_in_succ_chain starting at the right place.
+ */
+void insert_pair(NODE *p1, NODE *p2)
+{
+    if (p1)
+	p1->following = insert_in_succ_chain(p1->following, p2);
+    else
+	start = insert_in_succ_chain(start, p2);
+}
+
 
 /*
  * We have a new token.  Say the previous two tokens were "one" "way"
@@ -128,7 +241,7 @@ int verbose;
  * for ("one", "way") and token is "to".  This function adds ("way", "to") as a
  * successor to ("one","way") and makes prev_code point to ("way","to").
  */
-void process_token(const char *txt)
+static void process_token(const char *txt)
 {
      char *token = savetoken(txt);
      NODE *code = insert_token(prev_token, token);
@@ -136,6 +249,147 @@ void process_token(const char *txt)
      insert_pair(prev_code, code);
      prev_code = code;
      prev_token = token;
+}
+
+/*
+ * Lex calls this when EOF is reached.  It opens the next file if there
+ * is one.  Lex interprets a return value of 1 to mean "all done" and 0
+ * to mean "keep going".
+ */
+int yywrap(void)
+{
+    fclose(yyin);
+    insert_pair(prev_code, (NODE *)0);
+    prev_code = NULL;
+
+    if (*Argv == NULL)
+	return 1;
+    if ((yyin = fopen(*Argv, "r")) == NULL) {
+	/* gcc -Wall fodder */
+	if (*Argv == NULL)
+	    yyunput(0, NULL);
+	perror(*Argv);
+	exit(1);
+    }
+
+    Argv++;
+    in_included_text = 0;
+    if (verbose && n_files % 10 == 0)
+	fprintf(stderr, "%d files\n", n_files);
+    n_files++;
+    BEGIN init_state;
+    return 0;
+}
+
+static const char *tokstr(const char *txt)
+{
+    if (txt[0] != '\n')
+	return txt;
+    return txt[1] ? "<INCL>" : "<LF>";
+}
+
+/*
+ * Subroutine of treedump; it does one row.
+ */
+static void chaindump(FOLLOW *p, FILE *fp)
+{
+    const char *text;
+
+    for ( ; p != NULL; p = p->next) {
+	text = p->node == NULL ? "<EOF>" : tokstr(p->node->text2);
+	fprintf(fp, "%s %d", text, p->count);
+    }
+    putc('\n', fp);
+}
+
+static void treedump(NODE *tree, FILE *fp)
+{
+    if (tree != NULL) {
+	treedump(tree->right, fp);
+	fprintf(fp, "(%s %s) %d",
+	    tokstr(tree->text), tokstr(tree->text2),
+	    tree->ocount);
+	chaindump(tree->following, fp);
+	treedump(tree->left, fp);
+    }
+}
+
+/*
+ * This routine generates the dump file (-d option)
+ */
+static void dump_database(char *file)
+{
+    FILE *fp = fopen(file, "w");
+
+    if (fp == NULL) {
+	perror(file);
+	exit(1);
+    }
+    fprintf(fp, "START:");
+    chaindump(start, fp);
+    treedump(root, fp);
+    fclose(fp);
+}
+
+static void output_word(const char *word)
+{
+    static char line[MARGIN + 1];
+    static int room = MARGIN;
+    int l;
+
+    if (word == NULL)
+	return;
+
+    l = strlen(word);
+    /* If word won't fit, or starts with \n, dump the current line */
+    if (line[0] && (l >= room || word[0] == '\n')) {
+	printf("%s\n", line);
+	line[0] = 0;
+	room = MARGIN;
+    }
+
+    /* If word won't fit in the buffer or starts with \n, print it now */
+    if (l >= MARGIN || word[0] == '\n')
+	printf("%s", word);
+    else {
+	/* Otherwise fill it in */
+	strcat(line, word);
+	strcat(line, " ");
+	room -= (l + 1);
+    }
+}
+
+/*
+ * This function generates an article by traversing the
+ * structure we've built.
+ */
+static void generate_article(void)
+{
+    FOLLOW *p;
+    const char *tp;
+    int ncounts = n_files;
+    int n;
+    int accum;
+
+    for (p = start; ; p = p->node->following) {
+	/* Roll the dice to find out the next token.  The code below selects
+	 * the next token, and the new state, with a probability corresponding
+	 * to the frequency in the input. */
+	n = arc4random_uniform(ncounts);
+	for (accum = p->count; accum <= n && p->next != NULL; accum += p->count)
+	    p = p->next;
+	if (p->node == NULL)
+	    break;
+
+	/* Check for "end of story" */
+	tp = p->node->text2;
+	if (tp == NULL)
+	    break;
+	output_word(tp);
+	ncounts = p->node->ocount;
+    }
+    /* This will flush the buffer as well. */
+    output_word("\n");
 }
 
 int main(int argc, char **argv)
@@ -199,261 +453,4 @@ int main(int argc, char **argv)
 	generate_article();
     }
     return 0;
-}
-
-/*
- * Lex calls this when EOF is reached.  It opens the next file if there
- * is one.  Lex interprets a return value of 1 to mean "all done" and 0
- * to mean "keep going".
- */
-int yywrap(void)
-{
-    fclose(yyin);
-    insert_pair(prev_code, (NODE *)0);
-    prev_code = NULL;
-
-    if (*Argv == NULL)
-	return 1;
-    if ((yyin = fopen(*Argv, "r")) == NULL) {
-	perror(*Argv);
-	exit(1);
-    }
-
-    Argv++;
-    in_included_text = 0;
-    if (verbose && n_files % 10 == 0)
-	fprintf(stderr, "%d files\n", n_files);
-    n_files++;
-    BEGIN init_state;
-    return 0;
-}
-
-/*
- * This function saves a token in the hash table (if it isn't there
- * already) and returns a pointer to the stored copy.
- */
-char *savetoken(const char *txt)
-{
-    int h;
-    const char *p;
-    HTENTRY *hp;
-
-    n_total++;
-    for (p = txt, h = 0; *p; h += *p++)
-	continue;
-
-    for (hp = &hashtab[h % HSIZE]; hp->next != NULL; hp = hp->next) {
-	if (strcmp(hp->text, txt) == 0)
-	    return hp->text;
-    }
-
-    /* OK, it's a new token.  Make hp->next point to a new,
-     * null block and make hp->text point to the text.
-     */
-    n_tokens++;
-    hp->text = strdup(txt);
-    hp->next = (HTENTRY *)malloc(sizeof (*hp));
-    hp->next->next = NULL;
-    hp->next->text = NULL;
-    return hp->text;
-}
-
-/*
- * This recursive function inserts a token pair into the tree.
- */
-NODE *insert_in_tree(NODE *p, char *txt, char *txt2)
-{
-    int cmp;
-
-    if (p == NULL) {
-	/* Create a new node. */
-	p = (NODE *)malloc(sizeof (*p));
-	p->text = txt;
-	p->text2 = txt2;
-	p->left = p->right = NULL;
-	p->following = NULL;
-	p->ocount = 1;
-	tknptr = p;
-	n_pairs++;
-	if (verbose && (n_pairs % 1000) == 0)
-	    fprintf(stderr, "%d pairs\n", n_pairs);
-	return p;
-    }
-
-    cmp = my_strcmp(p->text, txt);
-    if (cmp == 0)
-	cmp = my_strcmp (p->text2, txt2);
-
-    if (cmp == 0) {
-	/* It's a match.  Increment the count. */
-        tknptr = p;
-	p->ocount += 1;
-    }
-    /* Look in the subtrees. */
-    else if (cmp < 0)
-	p->left = insert_in_tree(p->left, txt, txt2);
-    else
-	p->right = insert_in_tree(p->right, txt, txt2);
-    return p;
-}
-
-/*
- * This just calls insert_in_tree starting at the root
- */
-NODE *insert_token(char *txt, char *txt2)
-{
-    root = insert_in_tree(root, txt, txt2);
-    return tknptr;
-}
-
-/*
- * This function adds a successor.
- */
-FOLLOW *insert_in_succ_chain(FOLLOW *sp, NODE *np)
-{
-    if (sp == NULL) {
-	sp = (FOLLOW *)malloc(sizeof (*sp));
-	sp->node = np;
-	sp->count = 1;
-	sp->next = NULL;
-    }
-    else if (sp->node == np)
-	sp->count++;
-    else
-	sp->next = insert_in_succ_chain(sp->next, np);
-    return sp;
-}
-
-/*
- * This calls insert_in_succ_chain starting at the right place.
- */
-void insert_pair(NODE *p1, NODE *p2)
-{
-    if (p1)
-	p1->following = insert_in_succ_chain(p1->following, p2);
-    else
-	start = insert_in_succ_chain(start, p2);
-}
-
-const char *tokstr(const char *txt)
-{
-    if (txt[0] != '\n')
-	return txt;
-    return txt[1] ? "<INCL>" : "<LF>";
-}
-
-/*
- * Subroutine of treedump; it does one row.
- */
-void chaindump(FOLLOW *p, FILE *fp)
-{
-    const char *text;
-
-    for ( ; p != NULL; p = p->next) {
-	text = p->node == NULL ? "<EOF>" : tokstr(p->node->text2);
-	fprintf(fp, "%s %d", text, p->count);
-    }
-    putc('\n', fp);
-}
-
-void treedump(NODE *tree, FILE *fp)
-{
-    if (tree != NULL) {
-	treedump(tree->right, fp);
-	fprintf(fp, "(%s %s) %d",
-	    tokstr(tree->text), tokstr(tree->text2),
-	    tree->ocount);
-	chaindump(tree->following, fp);
-	treedump(tree->left, fp);
-    }
-}
-
-/*
- * This routine generates the dump file (-d option)
- */
-void dump_database(char *file)
-{
-    FILE *fp = fopen(file, "w");
-
-    if (fp == NULL) {
-	perror(file);
-	exit(1);
-    }
-    fprintf(fp, "START:");
-    chaindump(start, fp);
-    treedump(root, fp);
-    fclose(fp);
-}
-
-/*
- * This function generates an article by traversing the
- * structure we've built.
- */
-void generate_article(void)
-{
-    FOLLOW *p;
-    const char *tp;
-    int ncounts = n_files;
-    int n;
-    int accum;
-
-    for (p = start; ; p = p->node->following) {
-	/* Roll the dice to find out the next token.  The code below selects
-	 * the next token, and the new state, with a probability corresponding
-	 * to the frequency in the input. */
-	n = arc4random_uniform(ncounts);
-	for (accum = p->count; accum <= n && p->next != NULL; accum += p->count)
-	    p = p->next;
-	if (p->node == NULL)
-	    break;
-
-	/* Check for "end of story" */
-	tp = p->node->text2;
-	if (tp == NULL)
-	    break;
-	output_word(tp);
-	ncounts = p->node->ocount;
-    }
-    /* This will flush the buffer as well. */
-    output_word("\n");
-}
-
-/*
- * This version handles null strings
- */
-int my_strcmp(const char *a, const char *b)
-{
-    if (a == NULL)
-	return b ? -1 : 0;
-    if (b == NULL)
-	return 1;
-    return strcmp(a, b);
-}
-
-void output_word(const char *word)
-{
-    static char line[MARGIN + 1];
-    static int room = MARGIN;
-    int l;
-
-    if (word == NULL)
-	return;
-
-    l = strlen(word);
-    /* If word won't fit, or starts with \n, dump the current line */
-    if (line[0] && (l >= room || word[0] == '\n')) {
-	printf("%s\n", line);
-	line[0] = 0;
-	room = MARGIN;
-    }
-
-    /* If word won't fit in the buffer or starts with \n, print it now */
-    if (l >= MARGIN || word[0] == '\n')
-	printf("%s", word);
-    else {
-	/* Otherwise fill it in */
-	strcat(line, word);
-	strcat(line, " ");
-	room -= (l + 1);
-    }
 }
