@@ -1,3 +1,11 @@
+One of the first "machine learning" programs?
+
+Markov tree generation and walking through input.
+
+Cleaned up, ported, etc.  Times  change since the mid-1980's.
+
+---------------------------------------------------------------------------
+
 This is a cleaned-up reposting of the markov3 program.  The following
 changes have been made:
 
