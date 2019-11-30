@@ -66,7 +66,6 @@ int in_included_text = 0;
 	    process_token("\n> ...\n\n");
 	}
 }
-<BODY>^"In article".*\n	;	/* Reject rn crud */
 <BODY>[ \t]+		;	/* Skip white space */
 <BODY>\n[ \t\n]*\n	{
     /* Paragraph break */
