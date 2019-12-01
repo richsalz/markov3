@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <assert.h>
 
 #define MARGIN 75
 #define HSIZE 3557		/* Should be prime */
@@ -281,56 +282,6 @@ int yywrap(void)
     return 0;
 }
 
-static const char *tokstr(const char *txt)
-{
-    if (txt[0] != '\n')
-	return txt;
-    return txt[1] ? "<INCL>" : "<LF>";
-}
-
-/*
- * Subroutine of treedump; it does one row.
- */
-static void chaindump(FOLLOW *p, FILE *fp)
-{
-    const char *text;
-
-    for ( ; p != NULL; p = p->next) {
-	text = p->node == NULL ? "<EOF>" : tokstr(p->node->text2);
-	fprintf(fp, "%s %d", text, p->count);
-    }
-    putc('\n', fp);
-}
-
-static void treedump(NODE *tree, FILE *fp)
-{
-    if (tree != NULL) {
-	treedump(tree->right, fp);
-	fprintf(fp, "(%s %s) %d",
-	    tokstr(tree->text), tokstr(tree->text2),
-	    tree->ocount);
-	chaindump(tree->following, fp);
-	treedump(tree->left, fp);
-    }
-}
-
-/*
- * This routine generates the dump file (-d option)
- */
-static void dump_database(char *file)
-{
-    FILE *fp = fopen(file, "w");
-
-    if (fp == NULL) {
-	perror(file);
-	exit(1);
-    }
-    fprintf(fp, "START:");
-    chaindump(start, fp);
-    treedump(root, fp);
-    fclose(fp);
-}
-
 static void output_word(const char *word)
 {
     static char line[MARGIN + 1];
@@ -397,9 +348,8 @@ int main(int argc, char **argv)
     int i;
     int c;
     int n_articles = 10;
-    char *dumpfile = NULL;
 
-    while ((c = getopt(argc, argv, "vpn:d:")) != EOF) {
+    while ((c = getopt(argc, argv, "vpn::")) != EOF) {
 	switch (c) {
 	case 'v':
 	    verbose = 1;
@@ -409,9 +359,6 @@ int main(int argc, char **argv)
 	    break;
 	case 'n': 		/* # articles to generate */
 	    n_articles = atoi(optarg);
-	    break;
-	case 'd':		/* where to dump the data structure */
-	    dumpfile = optarg;
 	    break;
 	default:
 	    fprintf(stderr,
@@ -439,8 +386,6 @@ int main(int argc, char **argv)
 
     /* Parse input, build the database. */
     yylex();
-    if (dumpfile)
-	dump_database(dumpfile);
     if (verbose)
 	fprintf(stderr,
 	     "%d tokens (%d different), %d different pairs, %d files\n",
