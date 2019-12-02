@@ -3,7 +3,7 @@
 .TH MARKOV3 6 "3/6/87"
 .UC 4
 .SH NAME
-markov3 \- Digest and spit out quasi-random Usenet articles
+markov3 \- Digest and spit out quasi-random text
 .SH SYNOPSIS
 .B markov3
 [
@@ -19,8 +19,8 @@ files
 .SH DESCRIPTION
 .PP
 .I Markov3
-digests Usenet articles and builds an internal data structure that
-models the articles as if they came from a random process, where
+digests text files and builds an internal data structure that
+models them as if they came from a random process, where
 each word is determined by the previous two.  It then emits a series
 of articles on the standard output that have the same distribution
 of words, word pairs, and word triplets as do the input files.
@@ -38,7 +38,10 @@ B \-f
 (filter) option.  This is a command, invoked with popen(3) on each file.
 There should be a single
 .B %s
-string to indicate where the filename goes.
+string to indicate where the filename goes. For example, this will
+strip off email headers:
+.IP
+-f "sed -e 1,/^$/d %s"
 .PP
 By default, 10 articles, separated by form feeds, are written on the
 standard output.  The
