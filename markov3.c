@@ -1,4 +1,3 @@
-%{
 /*
  * Copyright (c) 1986, 1987 by Joe Buck
  *
@@ -26,7 +25,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <assert.h>
+#include <ctype.h>
 
 #define MARGIN 75
 #define HSIZE 3557		/* Should be prime */
@@ -35,33 +34,6 @@ typedef struct htentry HTENTRY;
 typedef struct node NODE;
 typedef struct follow FOLLOW;
 
-static void process_token(const char *txt);
-
-static int in_included_text = 0;
-
-%}
-
-%%
-
-^[[	><)|#}].*\n {
-	/* Try to catch most quoted text, email and Usenet. */
-	if (!in_included_text) {
-	    in_included_text = 1;
-	    process_token("\n> ...\n\n");
-	}
-}
-\n\n+	{
-	/* Paragraph break */
-	process_token("\n");
-}
-[^ \t\n]+	{
-	in_included_text = 0;
-	process_token(yytext);
-}
-[\n \t]		;	/* Skip white space */
-
-%%
-
 /*
  * hashtab is a hash table storing all the tokens we encounter.
  */
@@ -69,7 +41,6 @@ struct htentry {
     char *text;
     HTENTRY *next;
 };
-HTENTRY hashtab[HSIZE];
 
 /*
  * node and follow are portions of the structure we're going to build. A
@@ -92,17 +63,17 @@ struct follow {
 };
 
 
+static HTENTRY hashtab[HSIZE];
 static NODE *prev_code;
 static NODE *root;
 static NODE *tknptr;
 static FOLLOW *start;
-static char **Argv;
 static const char *filterstr;
 static char *prev_token;
-static int n_files;
-static int n_pairs;
-static int n_tokens;
-static int n_total;
+static int num_files;
+static int num_pairs;
+static int num_tokens;
+static int num_total;
 static int verbose;
 
 /*
@@ -115,7 +86,7 @@ static char *savetoken(const char *txt)
     const char *p;
     HTENTRY *hp;
 
-    n_total++;
+    num_total++;
     for (p = txt, h = 0; *p; h += *p++)
 	continue;
 
@@ -127,7 +98,7 @@ static char *savetoken(const char *txt)
     /* OK, it's a new token.  Make hp->next point to a new,
      * null block and make hp->text point to the text.
      */
-    n_tokens++;
+    num_tokens++;
     hp->text = strdup(txt);
     hp->next = (HTENTRY *)malloc(sizeof (*hp));
     hp->next->next = NULL;
@@ -163,9 +134,9 @@ static NODE *insert_in_tree(NODE *p, char *txt, char *txt2)
 	p->following = NULL;
 	p->ocount = 1;
 	tknptr = p;
-	n_pairs++;
-	if (verbose && (n_pairs % 1000) == 0)
-	    fprintf(stderr, "%d pairs\n", n_pairs);
+	num_pairs++;
+	if (verbose && (num_pairs % 1000) == 0)
+	    fprintf(stderr, "%d pairs\n", num_pairs);
 	return p;
     }
 
@@ -241,48 +212,33 @@ static void process_token(const char *txt)
      prev_token = token;
 }
 
-static void openit(const char *arg)
+static FILE *openit(const char *arg)
 {
     char buff[256];
+    FILE *fp;
 
     if (filterstr == NULL)
-	yyin = fopen(arg, "r");
+	fp = fopen(arg, "r");
     else {
 	snprintf(buff, sizeof buff, filterstr, arg);
-	yyin = popen(buff, "r");
+	fp = popen(buff, "r");
     }
-    if (yyin == NULL) {
-	/* gcc -Wall fodder */
-	if (arg == NULL)
-	    yyunput(0, NULL);
+    if (fp == NULL) {
 	perror(filterstr == NULL ? arg : filterstr);
 	exit(1);
     }
+    return fp;
 }
 
-/*
- * Lex calls this when EOF is reached.  It opens the next file if there
- * is one.  Lex interprets a return value of 1 to mean "all done" and 0
- * to mean "keep going".
- */
-int yywrap(void)
+static void finish(FILE *fp)
 {
     insert_pair(prev_code, (NODE *)0);
     prev_code = NULL;
 
     if (filterstr == NULL)
-	fclose(yyin);
+	fclose(fp);
     else
-	pclose(yyin);
-    if (*Argv == NULL)
-	return 1;
-
-    openit(*Argv++);
-    in_included_text = 0;
-    if (verbose && n_files % 10 == 0)
-	fprintf(stderr, "%d files\n", n_files);
-    n_files++;
-    return 0;
+	pclose(fp);
 }
 
 static void output_word(const char *word)
@@ -321,7 +277,7 @@ static void generate_article(void)
 {
     FOLLOW *p;
     const char *tp;
-    int ncounts = n_files;
+    int ncounts = num_files;
     int n;
     int accum;
 
@@ -346,14 +302,48 @@ static void generate_article(void)
     output_word("\n");
 }
 
+static void parse(FILE *fp)
+{
+    char word[256];
+    char *p = word;
+    int count;
+    int c;
+
+    while ((c = getc(fp)) != EOF) {
+	if (isspace(c)) {
+	    /* Whitespace. Did we have a word? */
+	    if (p > word) {
+		*p = '\0';
+		process_token(word);
+		p = word;
+	    }
+	    if (c == '\n') {
+		/* Multiple newlines? */
+		for (count = 1; (c = getc(fp)) == '\n'; count++)
+		    continue;
+		ungetc(c, fp);
+		if (count >= 2)
+		    process_token("\n");
+	    }
+	}
+	else if (p < &word[sizeof word])
+	    *p++ = c;
+    }
+    if (p > word) {
+	*p = '\0';
+	process_token(word);
+    }
+}
+
+
 int main(int argc, char **argv)
 {
     int i;
-    int c;
-    int n_articles = 10;
+    int count = 10;
+    FILE *fp;
 
-    while ((c = getopt(argc, argv, "f:n:v")) != EOF) {
-	switch (c) {
+    while ((i = getopt(argc, argv, "f:n:v")) != EOF) {
+	switch (i) {
 	case 'f':
 	    if (strstr(optarg, "%s") == NULL) {
 		fprintf(stderr, "Missing %%s in -f value\n");
@@ -365,32 +355,42 @@ int main(int argc, char **argv)
 	    verbose = 1;
 	    break;
 	case 'n': 		/* # articles to generate */
-	    n_articles = atoi(optarg);
+	    count = atoi(optarg);
 	    break;
 	default:
 	    fprintf(stderr,
-	     "Usage: markov3 [-pv] [-n n_art] [-d dump] files\n");
+	     "Usage: markov3 [-pv] [-n num_art] [-d dump] files\n");
 	    return 1;
 	}
     }
     argc -= optind;
     argv += optind;
+    if (filterstr != NULL && *argv == NULL) {
+	fprintf(stderr, "Can't use -f with stdin\n");
+	return 1;
+    }
 
-    /* yyin is lex input stream.  Point to first file. */
-    if (argv[0] != NULL)
-	openit(*argv++);
-    Argv = argv;
-    n_files = 1;
-
-    /* Parse input, build the database. */
-    yylex();
+    /* Parse input. */
+    num_files = 1;
+    if (*argv == NULL) {
+	parse(stdin);
+	finish(stdin);
+    }
+    else {
+	for ( ; *argv != NULL; argv++) {
+	    fp = openit(*argv);
+	    parse(fp);
+	    finish(fp);
+	    num_files++;
+	}
+    }
     if (verbose)
 	fprintf(stderr,
-	     "%d tokens (%d different), %d different pairs, %d files\n",
-	     n_total, n_tokens, n_pairs, n_files);
+	     "%d files %d tokens (%d different) %d different pairs\n",
+	     num_files, num_total, num_tokens, num_pairs);
 
     /* Generate the articles, separated by form feeds */
-    for (i = 0; i < n_articles; i++) {
+    for (i = 0; i < count; i++) {
 	if (i > 0)
 	    output_word("\n\f\n");
 	generate_article();
