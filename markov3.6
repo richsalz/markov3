@@ -7,8 +7,11 @@ markov3 \- Digest and spit out quasi-random Usenet articles
 .SH SYNOPSIS
 .B markov3
 [
-.B \-pv
+.B \-v
 ] [
+.B \-f
+.I filterstr
+]
 .B \-n
 .I n_articles
 ]
@@ -30,17 +33,17 @@ whitespace.  Paragraph breaks (blank lines) are also treated as a
 "word".  Paragraphs of included text are treated as single "words"
 and printed as "> ...".
 .PP
-By default, the program expects to be fed Usenet articles; it strips
-off headers, included text, and signatures (or at least it tries).
-The
-.B \-p
-(plain) option disables the header-stripping feature (otherwise
-everything is skipped until a blank line is encountered).
+To filter the input files, use the
+B \-f
+(filter) option.  This is a command, invoked with popen(3) on each file.
+There should be a single
+.B %s
+string to indicate where the filename goes.
 .PP
 By default, 10 articles, separated by form feeds, are written on the
 standard output.  The
 .B \-n
-option lets you specify a different number.
+(number) option lets you specify a different number.
 .PP
 The
 .B \-v

@@ -1,4 +1,4 @@
-CFLAGS=-O -Wall -Wextra -Wno-unneeded-internal-declaration
+CFLAGS=-g -Wall -Wextra -Wno-unneeded-internal-declaration
 
 all: markov3 tags
 

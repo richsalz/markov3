@@ -41,35 +41,25 @@ static int in_included_text = 0;
 
 %}
 
-%Start HDR BODY
-
 %%
 
-<HDR>^[^ \t]+:.*\n	;	/* Header line, e.g. "From: foo@bar.UUCP" */
-
-<HDR>^[ \t]+[^ \t].*\n	;	/* Continuation of header line */
-
-<HDR>^[ \t]*$		BEGIN BODY;
-<HDR>.			;	/* Eat anything that escaped */
-<HDR>\n			;
-
-<BODY>^[[	><)|#}].*\n	{
+^[[	><)|#}].*\n {
 	/* Try to catch most quoted text, email and Usenet. */
 	if (!in_included_text) {
 	    in_included_text = 1;
 	    process_token("\n> ...\n\n");
 	}
 }
-<BODY>[ \t]+		;	/* Skip white space */
-<BODY>\n[ \t\n]*\n	{
+[ \t]+		;	/* Skip white space */
+\n[ \t\n]*\n	{
 	/* Paragraph break */
 	process_token("\n");
 }
-<BODY>[^ \t\n]+		{
+[^ \t\n]+	{
 	in_included_text = 0;
 	process_token(yytext);
 }
-<BODY>\n		;
+\n		;
 
 %%
 
@@ -108,8 +98,8 @@ static NODE *root;
 static NODE *tknptr;
 static FOLLOW *start;
 static char **Argv;
+static const char *filterstr;
 static char *prev_token;
-static int init_state = HDR;
 static int n_files;
 static int n_pairs;
 static int n_tokens;
@@ -252,6 +242,25 @@ static void process_token(const char *txt)
      prev_token = token;
 }
 
+static void openit(const char *arg)
+{
+    char buff[256];
+
+    if (filterstr == NULL)
+	yyin = fopen(arg, "r");
+    else {
+	snprintf(buff, sizeof buff, filterstr, arg);
+	yyin = popen(buff, "r");
+    }
+    if (yyin == NULL) {
+	/* gcc -Wall fodder */
+	if (arg == NULL)
+	    yyunput(0, NULL);
+	perror(filterstr == NULL ? arg : filterstr);
+	exit(1);
+    }
+}
+
 /*
  * Lex calls this when EOF is reached.  It opens the next file if there
  * is one.  Lex interprets a return value of 1 to mean "all done" and 0
@@ -259,26 +268,21 @@ static void process_token(const char *txt)
  */
 int yywrap(void)
 {
-    fclose(yyin);
     insert_pair(prev_code, (NODE *)0);
     prev_code = NULL;
 
+    if (filterstr == NULL)
+	fclose(yyin);
+    else
+	pclose(yyin);
     if (*Argv == NULL)
 	return 1;
-    if ((yyin = fopen(*Argv, "r")) == NULL) {
-	/* gcc -Wall fodder */
-	if (*Argv == NULL)
-	    yyunput(0, NULL);
-	perror(*Argv);
-	exit(1);
-    }
 
-    Argv++;
+    openit(*Argv++);
     in_included_text = 0;
     if (verbose && n_files % 10 == 0)
 	fprintf(stderr, "%d files\n", n_files);
     n_files++;
-    BEGIN init_state;
     return 0;
 }
 
@@ -349,13 +353,17 @@ int main(int argc, char **argv)
     int c;
     int n_articles = 10;
 
-    while ((c = getopt(argc, argv, "vpn::")) != EOF) {
+    while ((c = getopt(argc, argv, "f:n:v")) != EOF) {
 	switch (c) {
+	case 'f':
+	    if (strstr(optarg, "%s") == NULL) {
+		fprintf(stderr, "Missing %%s in -f value\n");
+		exit(1);
+	    }
+	    filterstr = optarg;
+	    break;
 	case 'v':
 	    verbose = 1;
-	    break;
-	case 'p':		/* Input is plain text, not Usenet stuff */
-	    init_state = BODY;
 	    break;
 	case 'n': 		/* # articles to generate */
 	    n_articles = atoi(optarg);
@@ -369,18 +377,9 @@ int main(int argc, char **argv)
     argc -= optind;
     argv += optind;
 
-    /* initial state of lexical analyzer */
-    BEGIN init_state;
-
     /* yyin is lex input stream.  Point to first file. */
-    if (argv[0] != NULL) {
-	if ((yyin = fopen(*argv, "r")) == NULL) {
-	    perror(*argv);
-	    return 1;
-	}
-	argv++;
-    }
-    /* make it global so yywrap can access it */
+    if (argv[0] != NULL)
+	openit(*argv++);
     Argv = argv;
     n_files = 1;
 
