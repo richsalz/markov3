@@ -50,8 +50,7 @@ static int in_included_text = 0;
 	    process_token("\n> ...\n\n");
 	}
 }
-[ \t]+		;	/* Skip white space */
-\n[ \t\n]*\n	{
+\n\n+	{
 	/* Paragraph break */
 	process_token("\n");
 }
@@ -59,7 +58,7 @@ static int in_included_text = 0;
 	in_included_text = 0;
 	process_token(yytext);
 }
-\n		;
+[\n \t]		;	/* Skip white space */
 
 %%
 
