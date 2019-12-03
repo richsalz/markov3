@@ -50,7 +50,7 @@ struct htentry {
 struct node {
     const char *text;
     const char *text2;
-    int ocount;
+    int count;
     NODE *left;
     NODE *right;
     FOLLOW *following;
@@ -76,38 +76,37 @@ static int num_tokens;
 static int num_total;
 static int verbose;
 
+
 /*
- * This function saves a token in the hash table (if it isn't there
- * already) and returns a pointer to the stored copy.
+ * Save a token in the hash table (if not there * already) and return
+ * a pointer to the stored copy.
  */
-static char *savetoken(const char *txt)
+static char *savetoken(const char *text)
 {
     int h;
     const char *p;
     HTENTRY *hp;
 
-    num_total++;
-    for (p = txt, h = 0; *p; h += *p++)
+    /* Hash and lookup. */
+    for (num_total++, p = text, h = 0; *p; h += *p++)
 	continue;
-
     for (hp = &hashtab[h % HSIZE]; hp->next != NULL; hp = hp->next) {
-	if (strcmp(hp->text, txt) == 0)
+	if (strcmp(hp->text, text) == 0)
 	    return hp->text;
     }
 
-    /* OK, it's a new token.  Make hp->next point to a new,
-     * null block and make hp->text point to the text.
-     */
+    /* Not seen before, create a new token. */
     num_tokens++;
-    hp->text = strdup(txt);
+    hp->text = strdup(text);
     hp->next = (HTENTRY *)malloc(sizeof (*hp));
     hp->next->next = NULL;
     hp->next->text = NULL;
     return hp->text;
 }
 
+
 /*
- * This version handles null strings
+ * Strcmp() with special handling for NULL strings.
  */
 static int my_strcmp(const char *a, const char *b)
 {
@@ -118,21 +117,22 @@ static int my_strcmp(const char *a, const char *b)
     return strcmp(a, b);
 }
 
+
 /*
- * This recursive function inserts a token pair into the tree.
+ * Insert a token pair into the tree.  Recursive.
  */
-static NODE *insert_in_tree(NODE *p, char *txt, char *txt2)
+static NODE *insert_in_tree(NODE *p, char *text, char *text2)
 {
     int cmp;
 
     if (p == NULL) {
 	/* Create a new node. */
 	p = (NODE *)malloc(sizeof (*p));
-	p->text = txt;
-	p->text2 = txt2;
+	p->text = text;
+	p->text2 = text2;
 	p->left = p->right = NULL;
 	p->following = NULL;
-	p->ocount = 1;
+	p->count = 1;
 	tknptr = p;
 	num_pairs++;
 	if (verbose && (num_pairs % 1000) == 0)
@@ -140,34 +140,34 @@ static NODE *insert_in_tree(NODE *p, char *txt, char *txt2)
 	return p;
     }
 
-    cmp = my_strcmp(p->text, txt);
+    cmp = my_strcmp(p->text, text);
     if (cmp == 0)
-	cmp = my_strcmp(p->text2, txt2);
+	cmp = my_strcmp(p->text2, text2);
 
     if (cmp == 0) {
 	/* It's a match.  Increment the count. */
         tknptr = p;
-	p->ocount += 1;
+	p->count++;
     }
     /* Look in the subtrees. */
     else if (cmp < 0)
-	p->left = insert_in_tree(p->left, txt, txt2);
+	p->left = insert_in_tree(p->left, text, text2);
     else
-	p->right = insert_in_tree(p->right, txt, txt2);
+	p->right = insert_in_tree(p->right, text, text2);
     return p;
 }
 
 /*
- * This just calls insert_in_tree starting at the root
+ * Just call insert_in_tree starting at the root
  */
-static NODE *insert_token(char *txt, char *txt2)
+static NODE *insert_token(char *text, char *text2)
 {
-    root = insert_in_tree(root, txt, txt2);
+    root = insert_in_tree(root, text, text2);
     return tknptr;
 }
 
 /*
- * This function adds a successor.
+ * Add a successor.
  */
 static FOLLOW *insert_in_succ_chain(FOLLOW *sp, NODE *np)
 {
@@ -185,7 +185,7 @@ static FOLLOW *insert_in_succ_chain(FOLLOW *sp, NODE *np)
 }
 
 /*
- * This calls insert_in_succ_chain starting at the right place.
+ * Call insert_in_succ_chain starting at the right place.
  */
 void insert_pair(NODE *p1, NODE *p2)
 {
@@ -195,16 +195,15 @@ void insert_pair(NODE *p1, NODE *p2)
 	start = insert_in_succ_chain(start, p2);
 }
 
-
 /*
- * We have a new token.  Say the previous two tokens were "one" "way"
- * and the current token is "to".  Then prev_code points to a node
- * for ("one", "way") and token is "to".  This function adds ("way", "to") as a
- * successor to ("one","way") and makes prev_code point to ("way","to").
+ * We have a new token.  Say the previous two tokens were "one" "way" and the
+ * current token is "to".  Then prev_code points to a node for ("one", "way")
+ * and token is "to".  This function adds ("way", "to") as a successor to
+ * ("one","way") and makes prev_code point to ("way","to").
  */
-static void process_token(const char *txt)
+static void process_token(const char *text)
 {
-     char *token = savetoken(txt);
+     char *token = savetoken(text);
      NODE *code = insert_token(prev_token, token);
 
      insert_pair(prev_code, code);
@@ -212,6 +211,9 @@ static void process_token(const char *txt)
      prev_token = token;
 }
 
+/*
+ * Open input; file or pipe.
+ */
 static FILE *openit(const char *arg)
 {
     char buff[256];
@@ -230,6 +232,9 @@ static FILE *openit(const char *arg)
     return fp;
 }
 
+/*
+ * End of input; mark end node and close the input stream.
+ */
 static void finish(FILE *fp)
 {
     insert_pair(prev_code, (NODE *)0);
@@ -241,6 +246,9 @@ static void finish(FILE *fp)
 	pclose(fp);
 }
 
+/*
+ * Ouput text, wrapping as needed.
+ */
 static void output_word(const char *word)
 {
     static char line[MARGIN + 1];
@@ -270,8 +278,7 @@ static void output_word(const char *word)
 }
 
 /*
- * This function generates an article by traversing the
- * structure we've built.
+ * Generate an article by traversing the structure we've built.
  */
 static void generate_article(void)
 {
@@ -282,9 +289,9 @@ static void generate_article(void)
     int accum;
 
     for (p = start; ; p = p->node->following) {
-	/* Roll the dice to find out the next token.  The code below selects
-	 * the next token, and the new state, with a probability corresponding
-	 * to the frequency in the input. */
+	/* Roll the dice to find out the next token; select the next token,
+	 * and the new state, with a probability corresponding to the
+	 * frequency in the input. */
 	n = arc4random_uniform(ncounts);
 	for (accum = p->count; accum <= n && p->next != NULL; accum += p->count)
 	    p = p->next;
@@ -296,9 +303,10 @@ static void generate_article(void)
 	if (tp == NULL)
 	    break;
 	output_word(tp);
-	ncounts = p->node->ocount;
+	ncounts = p->node->count;
     }
-    /* This will flush the buffer as well. */
+
+    /* This flushes the buffer as well. */
     output_word("\n");
 }
 
@@ -329,12 +337,13 @@ static void parse(FILE *fp)
 	else if (p < &word[sizeof word])
 	    *p++ = c;
     }
+
+    /* Anything pending? */
     if (p > word) {
 	*p = '\0';
 	process_token(word);
     }
 }
-
 
 int main(int argc, char **argv)
 {
@@ -342,6 +351,7 @@ int main(int argc, char **argv)
     int count = 10;
     FILE *fp;
 
+    /* Parse options. */
     while ((i = getopt(argc, argv, "f:n:v")) != EOF) {
 	switch (i) {
 	case 'f':
@@ -354,7 +364,7 @@ int main(int argc, char **argv)
 	case 'v':
 	    verbose = 1;
 	    break;
-	case 'n': 		/* # articles to generate */
+	case 'n':
 	    count = atoi(optarg);
 	    break;
 	default:
