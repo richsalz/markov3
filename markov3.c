@@ -78,7 +78,7 @@ static int verbose;
 
 
 /*
- * Save a token in the hash table (if not there * already) and return
+ * Save a token in the hash table (if not there already) and return
  * a pointer to the stored copy.
  */
 static char *savetoken(const char *text)
