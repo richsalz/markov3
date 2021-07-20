@@ -176,8 +176,7 @@ static FOLLOW *insert_in_succ_chain(FOLLOW *sp, NODE *np)
 	sp->node = np;
 	sp->count = 1;
 	sp->next = NULL;
-    }
-    else if (sp->node == np)
+    } else if (sp->node == np)
 	sp->count++;
     else
 	sp->next = insert_in_succ_chain(sp->next, np);
@@ -230,20 +229,6 @@ static FILE *openit(const char *arg)
 	exit(1);
     }
     return fp;
-}
-
-/*
- * End of input; mark end node and close the input stream.
- */
-static void finish(FILE *fp)
-{
-    insert_pair(prev_code, (NODE *)0);
-    prev_code = NULL;
-
-    if (filterstr == NULL)
-	fclose(fp);
-    else
-	pclose(fp);
 }
 
 /*
@@ -343,13 +328,21 @@ static void parse(FILE *fp)
 	*p = '\0';
 	process_token(word);
     }
+
+    /* End of input; mark the end and close the stream. */
+    insert_pair(prev_code, (NODE *)0);
+    prev_code = NULL;
+
+    if (filterstr == NULL)
+	fclose(fp);
+    else
+	pclose(fp);
 }
 
 int main(int argc, char **argv)
 {
     int i;
     int count = 10;
-    FILE *fp;
 
     /* Parse options. */
     while ((i = getopt(argc, argv, "f:n:v")) != EOF) {
@@ -382,15 +375,11 @@ int main(int argc, char **argv)
 
     /* Parse input. */
     num_files = 1;
-    if (*argv == NULL) {
+    if (*argv == NULL)
 	parse(stdin);
-	finish(stdin);
-    }
     else {
 	for ( ; *argv != NULL; argv++) {
-	    fp = openit(*argv);
-	    parse(fp);
-	    finish(fp);
+	    parse(openit(*argv));
 	    num_files++;
 	}
     }
